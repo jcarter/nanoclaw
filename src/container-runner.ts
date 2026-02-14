@@ -15,6 +15,7 @@ import {
   GROUPS_DIR,
   IDLE_TIMEOUT,
 } from './config.js';
+import { getContainerRuntime } from './container-runtime.js';
 import { logger } from './logger.js';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
@@ -212,10 +213,9 @@ function readSecrets(): Record<string, string> {
   return secrets;
 }
 
-function buildContainerArgs(mounts: VolumeMount[], containerName: string): string[] {
+function buildContainerArgs(mounts: VolumeMount[], containerName: string, ports?: string[]): string[] {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
 
-  // Apple Container: --mount for readonly, -v for read-write
   for (const mount of mounts) {
     if (mount.readonly) {
       args.push(
@@ -224,6 +224,12 @@ function buildContainerArgs(mounts: VolumeMount[], containerName: string): strin
       );
     } else {
       args.push('-v', `${mount.hostPath}:${mount.containerPath}`);
+    }
+  }
+
+  if (ports) {
+    for (const port of ports) {
+      args.push('-p', port);
     }
   }
 
@@ -246,7 +252,7 @@ export async function runContainerAgent(
   const mounts = buildVolumeMounts(group, input.isMain);
   const safeName = group.folder.replace(/[^a-zA-Z0-9-]/g, '-');
   const containerName = `nanoclaw-${safeName}-${Date.now()}`;
-  const containerArgs = buildContainerArgs(mounts, containerName);
+  const containerArgs = buildContainerArgs(mounts, containerName, group.containerConfig?.ports);
 
   logger.debug(
     {
@@ -275,7 +281,8 @@ export async function runContainerAgent(
   fs.mkdirSync(logsDir, { recursive: true });
 
   return new Promise((resolve) => {
-    const container = spawn('container', containerArgs, {
+    const runtime = getContainerRuntime();
+    const container = spawn(runtime, containerArgs, {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -382,7 +389,7 @@ export async function runContainerAgent(
     const killOnTimeout = () => {
       timedOut = true;
       logger.error({ group: group.name, containerName }, 'Container timeout, stopping gracefully');
-      exec(`container stop ${containerName}`, { timeout: 15000 }, (err) => {
+      exec(`${runtime} stop ${containerName}`, { timeout: 15000 }, (err) => {
         if (err) {
           logger.warn({ group: group.name, containerName, err }, 'Graceful stop failed, force killing');
           container.kill('SIGKILL');

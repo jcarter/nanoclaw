@@ -29,6 +29,7 @@ export interface AllowedRoot {
 
 export interface ContainerConfig {
   additionalMounts?: AdditionalMount[];
+  ports?: string[]; // Port mappings, e.g. ["3000:3000"]
   timeout?: number; // Default: 300000 (5 minutes)
 }
 
