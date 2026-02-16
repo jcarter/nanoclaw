@@ -7,6 +7,102 @@ import {
 import { logger } from '../logger.js';
 import { Channel, OnInboundMessage, OnChatMetadata, RegisteredGroup } from '../types.js';
 
+// --- MarkdownV2 conversion utilities ---
+
+/** Characters that must be escaped outside of formatting entities in MarkdownV2. */
+const MD2_SPECIAL = /[_*\[\]()~`>#+\-=|{}.!\\]/g;
+
+function escapeMarkdownV2(text: string): string {
+  return text.replace(MD2_SPECIAL, '\\$&');
+}
+
+/**
+ * Convert standard Markdown (as produced by Claude) to Telegram MarkdownV2 format.
+ * Handles fenced code blocks, inline code, links, bold, italic, and bold-italic.
+ * All other MarkdownV2 special characters are escaped.
+ */
+function markdownToTelegramV2(text: string): string {
+  const blocks: string[] = [];
+  const ph = (s: string) => {
+    const i = blocks.length;
+    blocks.push(s);
+    return `\x00${i}\x00`;
+  };
+
+  let r = text;
+
+  // Fenced code blocks (```lang\ncode```)
+  r = r.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) =>
+    ph(`\`\`\`${lang}\n${code.replace(/([`\\])/g, '\\$1')}\`\`\``),
+  );
+
+  // Inline code (`code`)
+  r = r.replace(/`([^`\n]+)`/g, (_, code) =>
+    ph(`\`${code.replace(/([`\\])/g, '\\$1')}\``),
+  );
+
+  // Links [text](url) — text gets full escaping, URL only needs ) and \ escaped
+  r = r.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, t: string, url: string) =>
+    ph(`[${escapeMarkdownV2(t)}](${url.replace(/[)\\]/g, '\\$&')})`),
+  );
+
+  // Bold italic ***text***
+  r = r.replace(/\*\*\*(.+?)\*\*\*/g, (_, c: string) =>
+    ph(`*_${escapeMarkdownV2(c)}_*`),
+  );
+
+  // Bold **text**
+  r = r.replace(/\*\*(.+?)\*\*/g, (_, c: string) =>
+    ph(`*${escapeMarkdownV2(c)}*`),
+  );
+
+  // Italic *text* (not adjacent to other asterisks)
+  r = r.replace(/(?<!\*)\*([^*]+?)\*(?!\*)/g, (_, c: string) =>
+    ph(`_${escapeMarkdownV2(c)}_`),
+  );
+
+  // Reassemble: escape remaining plain text, restore protected blocks
+  return r
+    .split(/(\x00\d+\x00)/)
+    .map((part) => {
+      const m = part.match(/^\x00(\d+)\x00$/);
+      return m ? blocks[parseInt(m[1])] : escapeMarkdownV2(part);
+    })
+    .join('');
+}
+
+/**
+ * Send a Telegram message with MarkdownV2 formatting.
+ * Falls back to plain text if MarkdownV2 parsing fails.
+ */
+async function sendTelegramMessage(
+  api: Api,
+  chatId: string,
+  text: string,
+): Promise<void> {
+  const MAX_LENGTH = 4096;
+
+  // Try MarkdownV2 for content that fits in a single message
+  const formatted = markdownToTelegramV2(text);
+  if (formatted.length <= MAX_LENGTH) {
+    try {
+      await api.sendMessage(chatId, formatted, { parse_mode: 'MarkdownV2' });
+      return;
+    } catch {
+      logger.debug('MarkdownV2 send failed, falling back to plain text');
+    }
+  }
+
+  // Fallback: plain text with chunking for long messages
+  if (text.length <= MAX_LENGTH) {
+    await api.sendMessage(chatId, text);
+  } else {
+    for (let i = 0; i < text.length; i += MAX_LENGTH) {
+      await api.sendMessage(chatId, text.slice(i, i + MAX_LENGTH));
+    }
+  }
+}
+
 export interface TelegramChannelOpts {
   onMessage: OnInboundMessage;
   onChatMetadata: OnChatMetadata;
@@ -187,16 +283,7 @@ export class TelegramChannel implements Channel {
 
     try {
       const numericId = jid.replace(/^tg:/, '');
-
-      // Telegram has a 4096 character limit per message
-      const MAX_LENGTH = 4096;
-      if (text.length <= MAX_LENGTH) {
-        await this.bot.api.sendMessage(numericId, text);
-      } else {
-        for (let i = 0; i < text.length; i += MAX_LENGTH) {
-          await this.bot.api.sendMessage(numericId, text.slice(i, i + MAX_LENGTH));
-        }
-      }
+      await sendTelegramMessage(this.bot.api, numericId, text);
       logger.info({ jid, length: text.length }, 'Telegram message sent');
     } catch (err) {
       logger.error({ jid, err }, 'Failed to send Telegram message');
@@ -293,14 +380,7 @@ export async function sendPoolMessage(
   const api = poolApis[idx];
   try {
     const numericId = chatId.replace(/^tg:/, '');
-    const MAX_LENGTH = 4096;
-    if (text.length <= MAX_LENGTH) {
-      await api.sendMessage(numericId, text);
-    } else {
-      for (let i = 0; i < text.length; i += MAX_LENGTH) {
-        await api.sendMessage(numericId, text.slice(i, i + MAX_LENGTH));
-      }
-    }
+    await sendTelegramMessage(api, numericId, text);
     logger.info({ chatId, sender, poolIndex: idx, length: text.length }, 'Pool message sent');
   } catch (err) {
     logger.error({ chatId, sender, err }, 'Failed to send pool message');
