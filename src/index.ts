@@ -230,6 +230,8 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
       const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
       logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
       if (text) {
+        // Stop typing indicator before sending the response
+        await channel.setTyping?.(chatJid, false);
         const formatted = formatOutbound(channel, text);
         if (formatted) await channel.sendMessage(chatJid, formatted);
         outputSentToUser = true;

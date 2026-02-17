@@ -44,11 +44,11 @@ vi.mock('./logger.js', () => ({
   },
 }));
 
-const mockHasPoolBots = vi.fn(() => false);
-const mockSendPoolMessage = vi.fn(async () => {});
+const mockHasPoolBots = vi.fn<() => boolean>(() => false);
+const mockSendPoolMessage = vi.fn<(chatId: string, text: string, sender: string, groupFolder: string) => Promise<void>>(async () => {});
 vi.mock('./channels/telegram.js', () => ({
-  hasPoolBots: (...args: unknown[]) => mockHasPoolBots(...args),
-  sendPoolMessage: (...args: unknown[]) => mockSendPoolMessage(...args),
+  hasPoolBots: () => mockHasPoolBots(),
+  sendPoolMessage: (a: string, b: string, c: string, d: string) => mockSendPoolMessage(a, b, c, d),
 }));
 
 // ipc.ts imports these for task processing (not exercised in this file).
@@ -130,10 +130,10 @@ beforeEach(async () => {
     'tg:-100123456': TG_GROUP,
   };
 
-  mockSendMessage = vi.fn(async () => {});
+  mockSendMessage = vi.fn(async () => {}) as unknown as ReturnType<typeof vi.fn> & IpcDeps['sendMessage'];
 
   deps = {
-    sendMessage: mockSendMessage,
+    sendMessage: mockSendMessage as IpcDeps['sendMessage'],
     registeredGroups: () => groups,
     registerGroup: (jid, group) => {
       groups[jid] = group;
