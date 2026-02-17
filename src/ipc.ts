@@ -89,10 +89,18 @@ export function startIpcWatcher(deps: IpcDeps): void {
                       sourceGroup,
                     );
                   } else {
-                    await deps.sendMessage(
-                      data.chatJid,
-                      `${ASSISTANT_NAME}: ${data.text}`,
-                    );
+                    try {
+                      await deps.sendMessage(
+                        data.chatJid,
+                        `${ASSISTANT_NAME}: ${data.text}`,
+                      );
+                    } catch (sendErr) {
+                      logger.warn(
+                        { chatJid: data.chatJid, sourceGroup, err: sendErr },
+                        'IPC message send failed (no channel for JID)',
+                      );
+                      continue;
+                    }
                   }
                   logger.info(
                     { chatJid: data.chatJid, sourceGroup, sender: data.sender },

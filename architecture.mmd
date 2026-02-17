@@ -1,0 +1,96 @@
+flowchart TB
+    subgraph Channels["Inbound Channels"]
+        WA[WhatsApp<br/>Baileys]
+        TG[Telegram<br/>Bot API]
+        GM[Gmail<br/>googleapis polling]
+    end
+
+    subgraph Host["Host Process (Node.js)"]
+        ML[Message Loop<br/>polls every 2s]
+        EL[Email Loop<br/>polls every 60s]
+        SL[Scheduler Loop<br/>polls every 60s]
+        IPC[IPC Watcher<br/>polls every 1s]
+        DB[(SQLite<br/>messages, sessions,<br/>scheduled_tasks,<br/>processed_emails)]
+        GQ[Group Queue<br/>concurrency control]
+        RT[Router<br/>format + route outbound]
+    end
+
+    subgraph Container["Docker Container (per invocation)"]
+        CR[Container Runner<br/>spawns containers with mounts]
+        AR[Agent Runner<br/>entrypoint]
+        CC[Claude Code<br/>SDK session]
+        subgraph MCP["MCP Servers"]
+            NC[nanoclaw MCP<br/>send_message, schedule_task]
+            Gmail_MCP[gmail MCP<br/>read, send, draft emails]
+        end
+        subgraph Tools["Agent Tools"]
+            Bash_T[Bash]
+            Web[WebSearch / WebFetch]
+            Files[Read / Write / Edit]
+            AB[agent-browser<br/>Chromium automation]
+            Teams[Agent Teams<br/>sub-agents]
+        end
+    end
+
+    subgraph Storage["Persistent Storage"]
+        GF[groups/<br/>per-group CLAUDE.md,<br/>workspace files,<br/>conversation archives]
+        SD[data/sessions/<br/>Claude Code .claude dirs]
+        IC[data/ipc/<br/>per-group message +<br/>task + input dirs]
+        CREDS[~/.gmail-mcp/<br/>OAuth credentials]
+    end
+
+    %% Inbound flows
+    WA -->|messages| ML
+    TG -->|messages| ML
+    GM -->|unread emails<br/>label: NanoClaw| EL
+
+    %% Message storage
+    WA -->|store| DB
+    TG -->|store| DB
+
+    %% Processing
+    ML -->|new messages| GQ
+    EL -->|email prompt| CR
+    SL -->|due tasks| CR
+    GQ -->|process group| CR
+
+    %% Container lifecycle
+    CR -->|spawn + mount volumes| AR
+    AR -->|resume session| CC
+    CC --> MCP
+    CC --> Tools
+
+    %% IPC communication
+    NC -->|write JSON files| IC
+    IPC -->|read JSON files| IC
+    IPC -->|route message| RT
+    RT --> WA
+    RT --> TG
+
+    %% Email reply
+    EL -->|streaming callback| EL
+    EL -->|send reply| GM
+
+    %% Session persistence
+    CC -->|session ID| DB
+    AR -->|conversation archive| GF
+
+    %% Container mounts
+    CR -.->|mount| GF
+    CR -.->|mount| SD
+    CR -.->|mount| IC
+    CR -.->|mount| CREDS
+
+    %% Piped messages (follow-up messages to running container)
+    GQ -->|pipe via IPC input| IC
+    AR -->|watch for _close sentinel| IC
+
+    classDef channel fill:#4a9eff,color:#fff,stroke:#2d7cd6
+    classDef host fill:#f5f5f5,color:#333,stroke:#999
+    classDef container fill:#ff9f43,color:#fff,stroke:#cc7a2e
+    classDef storage fill:#2ed573,color:#fff,stroke:#20a55a
+    classDef db fill:#a55eea,color:#fff,stroke:#7d3ebd
+
+    class WA,TG,GM channel
+    class DB db
+    class GF,SD,IC,CREDS storage

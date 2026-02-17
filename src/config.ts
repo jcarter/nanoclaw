@@ -1,6 +1,6 @@
 import path from 'path';
 
-export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Andy';
+export const ASSISTANT_NAME = process.env.ASSISTANT_NAME || 'Juniper';
 export const POLL_INTERVAL = 2000;
 export const SCHEDULER_POLL_INTERVAL = 60000;
 export const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || '';
@@ -59,3 +59,13 @@ export const TRIGGER_PATTERN = new RegExp(
 // Uses system timezone by default
 export const TIMEZONE =
   process.env.TZ || Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+// Gmail channel configuration
+export const GMAIL_CREDENTIALS_DIR = path.join(HOME_DIR, '.gmail-mcp');
+export const EMAIL_CHANNEL: import('./types.js').EmailChannelConfig = {
+  enabled: process.env.EMAIL_ENABLED !== 'false',
+  triggerMode: 'label',
+  triggerValue: 'NanoClaw',
+  contextMode: 'single',
+  pollIntervalMs: 60000,
+};
