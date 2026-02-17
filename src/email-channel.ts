@@ -43,7 +43,7 @@ function getGmailClient() {
   return google.gmail({ version: 'v1', auth: oauth2 });
 }
 
-function buildQuery(): string {
+export function buildQuery(): string {
   switch (EMAIL_CHANNEL.triggerMode) {
     case 'label':
       return `label:${EMAIL_CHANNEL.triggerValue} is:unread`;
@@ -54,7 +54,7 @@ function buildQuery(): string {
   }
 }
 
-function extractBody(payload: any): string {
+export function extractBody(payload: any): string {
   // Plain text body
   if (payload.mimeType === 'text/plain' && payload.body?.data) {
     return Buffer.from(payload.body.data, 'base64').toString('utf-8');

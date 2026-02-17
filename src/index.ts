@@ -130,6 +130,39 @@ export function _setRegisteredGroups(groups: Record<string, RegisteredGroup>): v
   registeredGroups = groups;
 }
 
+/** @internal - exported for testing */
+export function _setLastAgentTimestamp(ts: Record<string, string>): void {
+  lastAgentTimestamp = ts;
+}
+
+/** @internal - exported for testing */
+export function _getLastAgentTimestamp(): Record<string, string> {
+  return lastAgentTimestamp;
+}
+
+/** @internal - exported for testing */
+export function _setSessions(s: Record<string, string>): void {
+  sessions = s;
+}
+
+/** @internal - exported for testing */
+export function _setChannels(chs: Channel[]): void {
+  channels.length = 0;
+  channels.push(...chs);
+}
+
+/** @internal - exported for testing */
+export const _processGroupMessages = (chatJid: string) => processGroupMessages(chatJid);
+
+/** @internal - exported for testing */
+export const _registerGroup = (jid: string, group: RegisteredGroup) => registerGroup(jid, group);
+
+/** @internal - exported for testing */
+export const _recoverPendingMessages = () => recoverPendingMessages();
+
+/** @internal - exported for testing */
+export const _getQueue = () => queue;
+
 /**
  * Process all pending messages for a group.
  * Called by the GroupQueue when it's this group's turn.

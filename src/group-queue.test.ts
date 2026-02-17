@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
+import fs from 'fs';
 
 import { GroupQueue } from './group-queue.js';
+import { ChildProcess } from 'child_process';
 
 // Mock config to control concurrency limit
 vi.mock('./config.js', () => ({
@@ -27,6 +29,7 @@ describe('GroupQueue', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.clearAllMocks();
     queue = new GroupQueue();
   });
 
@@ -241,5 +244,320 @@ describe('GroupQueue', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     expect(processed).toContain('group3@g.us');
+  });
+
+  // --- closeStdin() when state.active is false (email loop bug) ---
+
+  describe('closeStdin when not active', () => {
+    it('does NOT write _close sentinel when group was never activated via runForGroup', () => {
+      // The email loop calls runAgent directly (not through the queue),
+      // so state.active is never set to true. registerProcess alone
+      // does not flip the active flag.
+      const fakeProc = { killed: false } as unknown as ChildProcess;
+      queue.registerProcess('group1@g.us', fakeProc, 'ctr-1', 'my-group');
+
+      queue.closeStdin('group1@g.us');
+
+      // _close file should NOT be written because state.active is false
+      expect(fs.mkdirSync).not.toHaveBeenCalled();
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it('writes _close sentinel when group IS active', async () => {
+      let resolveProcessing: () => void;
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          resolveProcessing = resolve;
+        });
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+
+      // While active, register process with groupFolder
+      const fakeProc = { killed: false } as unknown as ChildProcess;
+      queue.registerProcess('group1@g.us', fakeProc, 'ctr-1', 'my-group');
+
+      queue.closeStdin('group1@g.us');
+
+      expect(fs.mkdirSync).toHaveBeenCalledWith(
+        '/tmp/nanoclaw-test-data/ipc/my-group/input',
+        { recursive: true },
+      );
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        '/tmp/nanoclaw-test-data/ipc/my-group/input/_close',
+        '',
+      );
+
+      // Release so the test cleans up
+      resolveProcessing!();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+  });
+
+  // --- sendMessage() piping to active container ---
+
+  describe('sendMessage', () => {
+    it('writes a JSON file to the IPC input directory when group is active', async () => {
+      let resolveProcessing: () => void;
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          resolveProcessing = resolve;
+        });
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Register process with groupFolder while active
+      const fakeProc = { killed: false } as unknown as ChildProcess;
+      queue.registerProcess('group1@g.us', fakeProc, 'ctr-1', 'test-folder');
+
+      const result = queue.sendMessage('group1@g.us', 'Hello there');
+
+      expect(result).toBe(true);
+      expect(fs.mkdirSync).toHaveBeenCalledWith(
+        '/tmp/nanoclaw-test-data/ipc/test-folder/input',
+        { recursive: true },
+      );
+      // writeFileSync is called with a .tmp path and JSON content
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        expect.stringContaining('.json.tmp'),
+        JSON.stringify({ type: 'message', text: 'Hello there' }),
+      );
+      // renameSync moves the .tmp to .json (atomic write)
+      expect(fs.renameSync).toHaveBeenCalledWith(
+        expect.stringContaining('.json.tmp'),
+        expect.stringContaining('.json'),
+      );
+
+      resolveProcessing!();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    it('returns false when group is NOT active', () => {
+      const result = queue.sendMessage('group1@g.us', 'Hello');
+
+      expect(result).toBe(false);
+      expect(fs.mkdirSync).not.toHaveBeenCalled();
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+    });
+
+    it('returns false when group is active but has no groupFolder', async () => {
+      let resolveProcessing: () => void;
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          resolveProcessing = resolve;
+        });
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+
+      // Register without groupFolder
+      const fakeProc = { killed: false } as unknown as ChildProcess;
+      queue.registerProcess('group1@g.us', fakeProc, 'ctr-1');
+
+      const result = queue.sendMessage('group1@g.us', 'Hello');
+
+      expect(result).toBe(false);
+
+      resolveProcessing!();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    it('writes JSON with correct message structure', async () => {
+      let resolveProcessing: () => void;
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          resolveProcessing = resolve;
+        });
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+
+      const fakeProc = { killed: false } as unknown as ChildProcess;
+      queue.registerProcess('group1@g.us', fakeProc, 'ctr-1', 'msg-group');
+
+      queue.sendMessage('group1@g.us', 'Test message content');
+
+      // Verify the JSON payload has the expected shape
+      const writeCall = vi.mocked(fs.writeFileSync).mock.calls.find(
+        (call) => typeof call[1] === 'string' && call[1].includes('message'),
+      );
+      expect(writeCall).toBeDefined();
+      const parsed = JSON.parse(writeCall![1] as string);
+      expect(parsed).toEqual({ type: 'message', text: 'Test message content' });
+
+      resolveProcessing!();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+  });
+
+  // --- registerProcess() tracking ---
+
+  describe('registerProcess', () => {
+    it('stores process and container name on group state', async () => {
+      let resolveProcessing: () => void;
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          resolveProcessing = resolve;
+        });
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+
+      const fakeProc = { killed: false } as unknown as ChildProcess;
+      queue.registerProcess('group1@g.us', fakeProc, 'ctr-abc', 'folder-1');
+
+      // sendMessage succeeds because process and groupFolder are registered
+      const result = queue.sendMessage('group1@g.us', 'ping');
+      expect(result).toBe(true);
+
+      resolveProcessing!();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    it('sets groupFolder when provided', async () => {
+      let resolveProcessing: () => void;
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          resolveProcessing = resolve;
+        });
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+
+      const fakeProc = { killed: false } as unknown as ChildProcess;
+      queue.registerProcess('group1@g.us', fakeProc, 'ctr-1', 'custom-folder');
+
+      queue.sendMessage('group1@g.us', 'test');
+
+      // Verify the groupFolder was used in the IPC path
+      expect(fs.mkdirSync).toHaveBeenCalledWith(
+        '/tmp/nanoclaw-test-data/ipc/custom-folder/input',
+        { recursive: true },
+      );
+
+      resolveProcessing!();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    it('does not set groupFolder when not provided', async () => {
+      let resolveProcessing: () => void;
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          resolveProcessing = resolve;
+        });
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+
+      const fakeProc = { killed: false } as unknown as ChildProcess;
+      queue.registerProcess('group1@g.us', fakeProc, 'ctr-1');
+
+      // sendMessage returns false because groupFolder is null
+      const result = queue.sendMessage('group1@g.us', 'test');
+      expect(result).toBe(false);
+
+      resolveProcessing!();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+  });
+
+  // --- closeStdin() writes _close sentinel ---
+
+  describe('closeStdin sentinel writing', () => {
+    it('creates _close file in the correct IPC input directory', async () => {
+      let resolveProcessing: () => void;
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          resolveProcessing = resolve;
+        });
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+
+      const fakeProc = { killed: false } as unknown as ChildProcess;
+      queue.registerProcess('group1@g.us', fakeProc, 'ctr-1', 'sentinel-group');
+
+      queue.closeStdin('group1@g.us');
+
+      expect(fs.writeFileSync).toHaveBeenCalledWith(
+        '/tmp/nanoclaw-test-data/ipc/sentinel-group/input/_close',
+        '',
+      );
+
+      resolveProcessing!();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    it('creates directory recursively before writing _close', async () => {
+      let resolveProcessing: () => void;
+
+      const processMessages = vi.fn(async () => {
+        await new Promise<void>((resolve) => {
+          resolveProcessing = resolve;
+        });
+        return true;
+      });
+
+      queue.setProcessMessagesFn(processMessages);
+      queue.enqueueMessageCheck('group1@g.us');
+      await vi.advanceTimersByTimeAsync(10);
+
+      const fakeProc = { killed: false } as unknown as ChildProcess;
+      queue.registerProcess('group1@g.us', fakeProc, 'ctr-1', 'dir-test');
+
+      queue.closeStdin('group1@g.us');
+
+      // mkdirSync is called before writeFileSync, with recursive: true
+      const mkdirCall = vi.mocked(fs.mkdirSync).mock.invocationCallOrder[0];
+      const writeCall = vi.mocked(fs.writeFileSync).mock.invocationCallOrder[0];
+      expect(mkdirCall).toBeLessThan(writeCall);
+      expect(fs.mkdirSync).toHaveBeenCalledWith(
+        '/tmp/nanoclaw-test-data/ipc/dir-test/input',
+        { recursive: true },
+      );
+
+      resolveProcessing!();
+      await vi.advanceTimersByTimeAsync(10);
+    });
+
+    it('does nothing for an unknown group', () => {
+      queue.closeStdin('unknown@g.us');
+
+      expect(fs.mkdirSync).not.toHaveBeenCalled();
+      expect(fs.writeFileSync).not.toHaveBeenCalled();
+    });
   });
 });
