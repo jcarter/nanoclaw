@@ -11,8 +11,8 @@ import {
   TIMEZONE,
 } from './config.js';
 import { hasPoolBots, sendPoolMessage } from './channels/telegram.js';
-import { AvailableGroup } from './container-runner.js';
-import { createTask, deleteTask, getTaskById, updateTask } from './db.js';
+import { AvailableGroup, writeTasksSnapshot } from './container-runner.js';
+import { createTask, deleteTask, getAllTasks, getTaskById, updateTask } from './db.js';
 import { logger } from './logger.js';
 import { RegisteredGroup } from './types.js';
 
@@ -174,6 +174,23 @@ export function startIpcWatcher(deps: IpcDeps): void {
   logger.info('IPC watcher started (per-group namespaces)');
 }
 
+function refreshTaskSnapshot(sourceGroup: string, isMain: boolean): void {
+  const tasks = getAllTasks();
+  writeTasksSnapshot(
+    sourceGroup,
+    isMain,
+    tasks.map((t) => ({
+      id: t.id,
+      groupFolder: t.group_folder,
+      prompt: t.prompt,
+      schedule_type: t.schedule_type,
+      schedule_value: t.schedule_value,
+      status: t.status,
+      next_run: t.next_run,
+    })),
+  );
+}
+
 export async function processTaskIpc(
   data: {
     type: string;
@@ -289,6 +306,7 @@ export async function processTaskIpc(
           { taskId, sourceGroup, targetFolder, contextMode },
           'Task created via IPC',
         );
+        refreshTaskSnapshot(sourceGroup, isMain);
       }
       break;
 
@@ -301,6 +319,7 @@ export async function processTaskIpc(
             { taskId: data.taskId, sourceGroup },
             'Task paused via IPC',
           );
+          refreshTaskSnapshot(sourceGroup, isMain);
         } else {
           logger.warn(
             { taskId: data.taskId, sourceGroup },
@@ -319,6 +338,7 @@ export async function processTaskIpc(
             { taskId: data.taskId, sourceGroup },
             'Task resumed via IPC',
           );
+          refreshTaskSnapshot(sourceGroup, isMain);
         } else {
           logger.warn(
             { taskId: data.taskId, sourceGroup },
@@ -337,6 +357,7 @@ export async function processTaskIpc(
             { taskId: data.taskId, sourceGroup },
             'Task cancelled via IPC',
           );
+          refreshTaskSnapshot(sourceGroup, isMain);
         } else {
           logger.warn(
             { taskId: data.taskId, sourceGroup },
