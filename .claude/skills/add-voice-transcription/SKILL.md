@@ -1,6 +1,6 @@
 ---
 name: add-voice-transcription
-description: Add voice message transcription to NanoClaw using OpenAI's Whisper API. Automatically transcribes WhatsApp voice notes so the agent can read and respond to them.
+description: Use when adding voice note transcription so the agent can understand and respond to audio messages.
 ---
 
 # Add Voice Message Transcription

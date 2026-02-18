@@ -1,6 +1,6 @@
 ---
 name: add-telegram-swarm
-description: Add Agent Swarm (Teams) support to Telegram. Each subagent gets its own bot identity in the group. Requires Telegram channel to be set up first (use /add-telegram). Triggers on "agent swarm", "agent teams telegram", "telegram swarm", "bot pool".
+description: Use when adding multi-agent team support to Telegram where each subagent has its own bot identity. Requires Telegram channel first. Triggers on "agent swarm", "telegram swarm", "bot pool".
 ---
 
 # Add Agent Swarm to Telegram

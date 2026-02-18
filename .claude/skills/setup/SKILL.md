@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Run initial NanoClaw setup. Use when user wants to install dependencies, configure Telegram, register their main channel, or start the background services. Triggers on "setup", "install", "configure nanoclaw", or first-time setup requests.
+description: Use when first installing NanoClaw, configuring channels, or setting up background services. Triggers on "setup", "install", "configure nanoclaw".
 ---
 
 # NanoClaw Setup

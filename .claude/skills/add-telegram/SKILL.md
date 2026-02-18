@@ -1,6 +1,6 @@
 ---
 name: add-telegram
-description: Add Telegram as a channel. Can replace WhatsApp entirely or run alongside it. Also configurable as a control-only channel (triggers actions) or passive channel (receives notifications only).
+description: Use when adding Telegram as a messaging channel to NanoClaw, whether replacing WhatsApp or running alongside it.
 ---
 
 # Add Telegram Channel

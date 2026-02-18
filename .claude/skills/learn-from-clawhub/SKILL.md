@@ -1,6 +1,6 @@
 ---
 name: learn-from-clawhub
-description: "Learn how to do things by finding and installing skills from ClawHub. Use when user says 'learn how to', 'learn to', 'learn X', or wants to find/install skills. Triggers on: learn, learn how to, clawhub, find skill, install skill."
+description: "Use when user says 'learn how to', 'learn to', 'learn X', or wants to find/install skills from ClawHub."
 ---
 
 # Learn Skills from ClawHub
