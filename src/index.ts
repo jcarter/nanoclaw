@@ -32,7 +32,6 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
-  isEmailProcessed,
   markEmailProcessed,
   markEmailResponded,
   setRegisteredGroup,
