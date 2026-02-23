@@ -3,6 +3,9 @@ import path from 'path';
 
 import {
   ASSISTANT_NAME,
+  DATA_DIR,
+  EMAIL_CHANNEL,
+  GMAIL_CREDENTIALS_DIR,
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
@@ -12,13 +15,14 @@ import {
 } from './config.js';
 import { TelegramChannel } from './channels/telegram.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
-import {
-  ContainerOutput,
-  runContainerAgent,
-  writeGroupsSnapshot,
-  writeTasksSnapshot,
-} from './container-runner.js';
+import { ContainerOutput, runContainerAgent, writeGroupsSnapshot, writeTasksSnapshot } from './container-runner.js';
 import { cleanupOrphans, ensureContainerRuntimeRunning } from './container-runtime.js';
+import {
+  checkForNewEmails,
+  getContextKey,
+  markAsRead,
+  sendEmailReply,
+} from './email-channel.js';
 import {
   getAllChats,
   getAllRegisteredGroups,
@@ -28,6 +32,9 @@ import {
   getNewMessages,
   getRouterState,
   initDatabase,
+  isEmailProcessed,
+  markEmailProcessed,
+  markEmailResponded,
   setRegisteredGroup,
   setRouterState,
   setSession,
@@ -423,6 +430,84 @@ function ensureContainerSystemRunning(): void {
   cleanupOrphans();
 }
 
+async function startEmailLoop(): Promise<void> {
+  if (!EMAIL_CHANNEL.enabled) {
+    logger.info('Email channel disabled');
+    return;
+  }
+
+  if (!fs.existsSync(path.join(GMAIL_CREDENTIALS_DIR, 'credentials.json'))) {
+    logger.warn('Gmail credentials not found, email channel disabled');
+    return;
+  }
+
+  logger.info(
+    { triggerMode: EMAIL_CHANNEL.triggerMode, triggerValue: EMAIL_CHANNEL.triggerValue },
+    'Email channel started',
+  );
+
+  while (true) {
+    try {
+      const emails = await checkForNewEmails();
+
+      for (const email of emails) {
+        logger.info({ from: email.from, subject: email.subject }, 'Processing email');
+        markEmailProcessed(email.id, email.threadId, email.from, email.subject);
+
+        const contextKey = getContextKey(email);
+        const groupFolder = EMAIL_CHANNEL.contextMode === 'single'
+          ? MAIN_GROUP_FOLDER
+          : contextKey;
+
+        const groupDir = path.join(DATA_DIR, '..', 'groups', groupFolder);
+        fs.mkdirSync(groupDir, { recursive: true });
+
+        const emailGroup: RegisteredGroup = {
+          name: contextKey,
+          folder: groupFolder,
+          trigger: '',
+          added_at: new Date().toISOString(),
+        };
+
+        const prompt = `<email>\n<from>${email.from}</from>\n<subject>${email.subject}</subject>\n<date>${email.date}</date>\n<body>\n${email.body}\n</body>\n</email>\n\nRespond to this email. Your response will be sent as an email reply.`;
+
+        let replySent = false;
+        const emailJid = `email:${email.from}`;
+        await runAgent(emailGroup, prompt, emailJid, async (output) => {
+          if (replySent || !output.result) return;
+          const raw = typeof output.result === 'string' ? output.result : JSON.stringify(output.result);
+          const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+          if (!text) return;
+
+          try {
+            await sendEmailReply(email.threadId, email.from, email.subject, text, email.id);
+            markEmailResponded(email.id);
+            replySent = true;
+            logger.info({ to: email.from, subject: email.subject }, 'Email reply sent');
+          } catch (err) {
+            logger.error({ err, to: email.from }, 'Failed to send email reply');
+          }
+
+          // Write close sentinel directly — email bypasses queue
+          const inputDir = path.join(DATA_DIR, 'ipc', groupFolder, 'input');
+          fs.mkdirSync(inputDir, { recursive: true });
+          fs.writeFileSync(path.join(inputDir, '_close'), '');
+        });
+
+        try {
+          await markAsRead(email.id);
+        } catch (err) {
+          logger.warn({ err, emailId: email.id }, 'Failed to mark email as read');
+        }
+      }
+    } catch (err) {
+      logger.error({ err }, 'Error in email loop');
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, EMAIL_CHANNEL.pollIntervalMs));
+  }
+}
+
 async function main(): Promise<void> {
   ensureContainerSystemRunning();
   initDatabase();
@@ -493,6 +578,9 @@ async function main(): Promise<void> {
   startMessageLoop().catch((err) => {
     logger.fatal({ err }, 'Message loop crashed unexpectedly');
     process.exit(1);
+  });
+  startEmailLoop().catch((err) => {
+    logger.error({ err }, 'Email loop crashed');
   });
 }
 

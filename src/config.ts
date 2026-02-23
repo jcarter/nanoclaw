@@ -74,3 +74,12 @@ export const TELEGRAM_BOT_TOKEN =
   process.env.TELEGRAM_BOT_TOKEN || envConfig.TELEGRAM_BOT_TOKEN || '';
 export const TELEGRAM_ONLY =
   (process.env.TELEGRAM_ONLY || envConfig.TELEGRAM_ONLY) === 'true';
+
+export const GMAIL_CREDENTIALS_DIR = path.join(HOME_DIR, '.gmail-mcp');
+export const EMAIL_CHANNEL: import('./types.js').EmailChannelConfig = {
+  enabled: process.env.EMAIL_ENABLED !== 'false',
+  triggerMode: 'label',
+  triggerValue: 'NanoClaw',
+  contextMode: 'single',
+  pollIntervalMs: 60000,
+};
