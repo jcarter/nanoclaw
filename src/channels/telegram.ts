@@ -14,7 +14,7 @@ import {
 /** Characters that must be escaped outside of formatting entities in MarkdownV2. */
 const MD2_SPECIAL = /[_*\[\]()~`>#+\-=|{}.!\\]/g;
 
-function escapeMarkdownV2(text: string): string {
+export function escapeMarkdownV2(text: string): string {
   return text.replace(MD2_SPECIAL, '\\$&');
 }
 
@@ -23,7 +23,7 @@ function escapeMarkdownV2(text: string): string {
  * Handles fenced code blocks, inline code, links, bold, italic, and bold-italic.
  * All other MarkdownV2 special characters are escaped.
  */
-function markdownToTelegramV2(text: string): string {
+export function markdownToTelegramV2(text: string): string {
   const blocks: string[] = [];
   const ph = (s: string) => {
     const i = blocks.length;
@@ -76,7 +76,7 @@ function markdownToTelegramV2(text: string): string {
  * Send a Telegram message with MarkdownV2 formatting.
  * Falls back to plain text if MarkdownV2 parsing fails.
  */
-async function sendTelegramMessage(
+export async function sendTelegramMessage(
   api: Api,
   chatId: string,
   text: string,
