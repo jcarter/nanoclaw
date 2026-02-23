@@ -99,9 +99,11 @@ export class GroupQueue {
     if (state.active) {
       state.pendingTasks.push({ id: taskId, groupJid, fn });
       if (state.idleWaiting) {
+        logger.info({ groupJid, taskId }, 'Container idle, closing to run queued task');
         this.closeStdin(groupJid);
+      } else {
+        logger.debug({ groupJid, taskId }, 'Container active, task queued');
       }
-      logger.debug({ groupJid, taskId }, 'Container active, task queued');
       return;
     }
 
