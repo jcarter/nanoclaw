@@ -9,11 +9,12 @@ import {
   IDLE_TIMEOUT,
   MAIN_GROUP_FOLDER,
   POLL_INTERVAL,
+  TELEGRAM_BOT_POOL,
   TELEGRAM_BOT_TOKEN,
   TELEGRAM_ONLY,
   TRIGGER_PATTERN,
 } from './config.js';
-import { TelegramChannel } from './channels/telegram.js';
+import { initBotPool, TelegramChannel } from './channels/telegram.js';
 import { WhatsAppChannel } from './channels/whatsapp.js';
 import { ContainerOutput, runContainerAgent, writeGroupsSnapshot, writeTasksSnapshot } from './container-runner.js';
 import { cleanupOrphans, ensureContainerRuntimeRunning } from './container-runtime.js';
@@ -50,6 +51,46 @@ import { logger } from './logger.js';
 
 // Re-export for backwards compatibility during refactor
 export { escapeXml, formatMessages } from './router.js';
+
+export interface StreamingHandlerDeps {
+  channel: Pick<Channel, 'sendMessage' | 'setTyping'>;
+  chatJid: string;
+  groupName: string;
+  resetIdleTimer: () => void;
+  notifyIdle: () => void;
+}
+
+export function createStreamingHandler(deps: StreamingHandlerDeps) {
+  let hadError = false;
+  let outputSentToUser = false;
+
+  const handler = async (result: ContainerOutput) => {
+    if (result.result) {
+      const raw =
+        typeof result.result === 'string'
+          ? result.result
+          : JSON.stringify(result.result);
+      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
+      logger.info({ group: deps.groupName }, `Agent output: ${raw.slice(0, 200)}`);
+      if (text) {
+        await deps.channel.sendMessage(deps.chatJid, text);
+        await deps.channel.setTyping?.(deps.chatJid, false);
+        outputSentToUser = true;
+      }
+      deps.resetIdleTimer();
+    }
+
+    if (result.status === 'success') {
+      deps.notifyIdle();
+    }
+
+    if (result.status === 'error') {
+      hadError = true;
+    }
+  };
+
+  return { handler, state: () => ({ hadError, outputSentToUser }) };
+}
 
 let lastTimestamp = '';
 let sessions: Record<string, string> = {};
@@ -188,36 +229,21 @@ async function processGroupMessages(chatJid: string): Promise<boolean> {
   };
 
   await channel.setTyping?.(chatJid, true);
-  let hadError = false;
-  let outputSentToUser = false;
 
-  const output = await runAgent(group, prompt, chatJid, async (result) => {
-    // Streaming output callback — called for each agent result
-    if (result.result) {
-      const raw = typeof result.result === 'string' ? result.result : JSON.stringify(result.result);
-      // Strip <internal>...</internal> blocks — agent uses these for internal reasoning
-      const text = raw.replace(/<internal>[\s\S]*?<\/internal>/g, '').trim();
-      logger.info({ group: group.name }, `Agent output: ${raw.slice(0, 200)}`);
-      if (text) {
-        await channel.sendMessage(chatJid, text);
-        outputSentToUser = true;
-      }
-      // Only reset idle timer on actual results, not session-update markers (result: null)
-      resetIdleTimer();
-    }
-
-    if (result.status === 'success') {
-      queue.notifyIdle(chatJid);
-    }
-
-    if (result.status === 'error') {
-      hadError = true;
-    }
+  const { handler, state: streamState } = createStreamingHandler({
+    channel,
+    chatJid,
+    groupName: group.name,
+    resetIdleTimer,
+    notifyIdle: () => queue.notifyIdle(chatJid),
   });
+
+  const output = await runAgent(group, prompt, chatJid, handler);
 
   await channel.setTyping?.(chatJid, false);
   if (idleTimer) clearTimeout(idleTimer);
 
+  const { hadError, outputSentToUser } = streamState();
   if (output === 'error' || hadError) {
     // If we already sent output to the user, don't roll back the cursor —
     // the user got their response and re-processing would send duplicates.
@@ -542,6 +568,9 @@ async function main(): Promise<void> {
     const telegram = new TelegramChannel(TELEGRAM_BOT_TOKEN, channelOpts);
     channels.push(telegram);
     await telegram.connect();
+    if (TELEGRAM_BOT_POOL.length > 0) {
+      await initBotPool(TELEGRAM_BOT_POOL);
+    }
   }
 
   // Start subsystems (independently of connection handler)

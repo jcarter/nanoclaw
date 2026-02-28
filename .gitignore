@@ -34,3 +34,4 @@ groups/global/*
 .nanoclaw/
 
 agents-sdk-docs
+conductor/

@@ -11,6 +11,7 @@ import {
   CONTAINER_MAX_OUTPUT_SIZE,
   CONTAINER_TIMEOUT,
   DATA_DIR,
+  GMAIL_CREDENTIALS_DIR,
   GROUPS_DIR,
   IDLE_TIMEOUT,
   TIMEZONE,
@@ -138,6 +139,15 @@ function buildVolumeMounts(
     containerPath: '/home/node/.claude',
     readonly: false,
   });
+
+  // Mount Gmail credentials so the Gmail MCP server can access them
+  if (fs.existsSync(GMAIL_CREDENTIALS_DIR)) {
+    mounts.push({
+      hostPath: GMAIL_CREDENTIALS_DIR,
+      containerPath: '/home/node/.gmail-mcp',
+      readonly: false,  // MCP may need to refresh tokens
+    });
+  }
 
   // Per-group IPC namespace: each group gets its own IPC directory
   // This prevents cross-group privilege escalation via IPC
